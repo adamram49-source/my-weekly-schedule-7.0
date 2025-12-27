@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="he">
+<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+<script>
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    await OneSignal.init({
+      appId: "4e324ecc-091a-446b-ad74-d27e6218c8b9",
+    });
+  });
+</script>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>לוח משימות שבועי</title>
+<link rel="manifest" href="manifest.json">
+<style>
+body{font-family:system-ui;direction:rtl;background:#eef2ff;margin:0;padding:10px;}
+h1{text-align:center;}
+.guide{background:#fff8dc;padding:10px;margin-bottom:10px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,.1);}
+.nav{display:flex;justify-content:center;margin:10px;}
+.nav button{margin:0 5px;padding:5px 10px;}
+.week{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;}
+.day{background:white;border-radius:12px;padding:10px;box-shadow:0 4px 8px rgba(0,0,0,.1);}
+.day-title{font-weight:bold;}
+.day-date{font-size:13px;color:#555;margin-bottom:6px;}
+.day.today{background:#fff9b1;}
+.task{background:#e5e7eb;border-radius:8px;padding:6px;margin-bottom:6px;}
+.task.past{background:#c7d2fe;}
+.task.done{background:#bbf7d0;}
+button{font-size:12px;margin:2px;}
+.add{width:100%;}
+</style>
+</head>
+<body>
+
+<h1>📅 לוח משימות</h1>
+
+<div class="guide" id="guide"></div>
+
+<div class="nav">
+  <button onclick="prevWeek()">⬅ שבוע קודם</button>
+  <button onclick="nextWeek()">שבוע הבא ➡</button>
+</div>
+
+<div class="week" id="week"></div>
+
+<script>
+/* ---- הגדרת PWA ---- */
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js");}
+
+/* ---- משתנים ---- */
+const daysNames=["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
+let tasks = JSON.parse(localStorage.getItem("tasks")||"[]");
+let currentWeekOffset = 0;
+
+/* ---- שמירת משימות ---- */
+function saveTasks(){localStorage.setItem("tasks",JSON.stringify(tasks)); render(); scheduleAllNotifications();}
+
+/* ---- זיהוי סוג מכשיר ---- */
+function detectDevice(){
+  const ua = navigator.userAgent;
+  if(/android/i.test(ua)) return "אנדרואיד";
+  if(/iPad|iPhone|iPod/.test(ua)) return "iOS";
+  if(/Tablet|iPad/.test(ua)) return "טאבלט";
+  return "מחשב";
+}
+
+/* ---- מדריך התקנה ---- */
+function showGuide(){
+  const device=detectDevice();
+  let msg="כדי להשתמש באפליקציה ולהפעיל התראות:\n";
+  if(device==="אנדרואיד") msg+="פתח את התפריט בדפדפן -> הוסף למסך הבית";
+  else if(device==="iOS") msg+="פתח את ספארי -> לחץ על סמל השיתוף -> הוסף למסך הבית";
+  else msg+="פתח את האתר בדפדפן ותוכל להשתמש בו כרגיל";
+  document.getElementById("guide").innerText=`סוג המכשיר: ${device}\n${msg}`;
+}
+showGuide();
+
+/* ---- יצירת שבוע ---- */
+function getWeek(offset=0){
+  const arr=[]; 
+  const d=new Date(); 
+  d.setDate(d.getDate()-d.getDay() + offset*7);
+  for(let i=0;i<7;i++){const x=new Date(d); x.setDate(d.getDate()+i); arr.push(x);}
+  return arr;
+}
+
+/* ---- הצגת לוח ---- */
+function render(){
+  const week=document.getElementById("week"); week.innerHTML="";
+  const now=new Date();
+  const todayStr=now.toISOString().split("T")[0];
+  getWeek(currentWeekOffset).forEach(date=>{
+    const key=date.toISOString().split("T")[0];
+    const box=document.createElement("div"); box.className="day";
+    if(key===todayStr && currentWeekOffset===0) box.classList.add("today");
+    box.innerHTML=`<div class="day-title">${daysNames[date.getDay()]}</div><div class="day-date">${date.toLocaleDateString("he-IL")}</div>`;
+    
+    tasks.filter(t=>t.date===key).forEach(t=>{
+      const taskTime=new Date(`${t.date}T${t.time}`);
+      const div=document.createElement("div"); div.className="task";
+      if(t.done) div.classList.add("done"); 
+      else if(taskTime<now) div.classList.add("past");
+      div.innerHTML=`
+        ⏰ ${t.time}<br>${t.text}<br>
+        <button onclick="editTask('${t.id}')">✏️</button>
+        <button onclick="deleteTask('${t.id}')">🗑️</button>
+        <button onclick="doneTask('${t.id}')">✔</button>
+      `;
+      box.appendChild(div);
+    });
+
+    const btn=document.createElement("button"); btn.className="add"; btn.textContent="➕ הוסף משימה";
+    btn.onclick=()=>addTask(key);
+    box.appendChild(btn);
+    week.appendChild(box);
+  });
+}
+
+/* ---- הוספה ---- */
+function addTask(date){
+  const text=prompt("הקלד את המשימה:"); if(!text) return;
+  let time=""; while(!/^\d{2}:\d{2}$/.test(time)){time=prompt("שעה (HH:MM) - רק מספרים, לדוגמה 14:30):"); if(time===null) return;}
+  let notify=false; 
+  if(Notification.permission==="granted"){notify=confirm("להפעיל התראה למשימה זו?");} 
+  else {Notification.requestPermission().then(p=>{if(p==="granted"){notify=confirm("להפעיל התראה למשימה זו?");}});}
+  tasks.push({id:crypto.randomUUID(),date,time,text,done:false,notify:notify});
+  saveTasks();
+}
+
+/* ---- עריכה ---- */
+function editTask(id){
+  const t=tasks.find(x=>x.id===id);
+  const text=prompt("עריכת משימה:",t.text); if(text!==null) t.text=text;
+  let time=t.time; 
+  while(!/^\d{2}:\d{2}$/.test(time)){time=prompt("שעה (HH:MM) - רק מספרים:",t.time); if(time===null) break;} 
+  if(time!==null) t.time=time;
+  if(Notification.permission==="granted"){t.notify=confirm("להפעיל התראה למשימה זו?");} 
+  else {Notification.requestPermission().then(p=>{if(p==="granted"){t.notify=confirm("להפעיל התראה למשימה זו?");}});}
+  saveTasks();
+}
+
+/* ---- מחיקה וסימון ---- */
+function deleteTask(id){if(confirm("למחוק משימה?")){tasks=tasks.filter(t=>t.id!==id); saveTasks();}}
+function doneTask(id){tasks.find(x=>x.id===id).done=true; saveTasks();}
+
+/* ---- ניווט שבועות ---- */
+function prevWeek(){currentWeekOffset--; render();}
+function nextWeek(){currentWeekOffset++; render();}
+
+/* ---- תזמון התראות ---- */
+function scheduleAllNotifications(){
+  navigator.serviceWorker.ready.then(reg=>{
+    const now=Date.now();
+    tasks.forEach(t=>{
+      if(!t.notify || t.done) return;
+      const taskTime=new Date(`${t.date}T${t.time}`).getTime();
+      if(taskTime>now){
+        reg.active.postMessage({type:"schedule",task:t});
+      }
+    });
+  });
+}
+
+/* ---- רענון אוטומטי כל שנייה ---- */
+setInterval(render,1000);
+
+/* ---- התחלה ---- */
+render();
+scheduleAllNotifications();
+</script>
+</body>
+</html>
